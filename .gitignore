@@ -1,0 +1,17 @@
+# Secrets. The webhook URLs are effectively passwords. Never commit them.
+.env
+
+# SQLite state. Kept in the GitHub Actions cache, not in the repo, so item
+# titles never land in git history.
+state.db
+state.db-journal
+state.db-wal
+
+# Logs.
+*.log
+
+# Python.
+__pycache__/
+*.pyc
+.venv/
+venv/

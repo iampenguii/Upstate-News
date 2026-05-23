@@ -1,0 +1,49 @@
+name: Weekly heartbeat
+
+# Posts a 7-day summary to #bot-status every Monday at 09:00 America/New_York.
+#
+# GitHub Actions cron is UTC only. 09:00 ET is 13:00 UTC under EDT and 14:00
+# UTC under EST, so this fires at both times. heartbeat.py checks the actual
+# Eastern hour and posts only at 09:00 ET; the other invocation exits quietly.
+on:
+  schedule:
+    - cron: "0 13 * * 1"
+    - cron: "0 14 * * 1"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Post the heartbeat now, ignoring the 09:00 ET time gate"
+        type: boolean
+        default: false
+
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Read-only restore of the state cache written by the poll workflow.
+      # The heartbeat only reads the runs table; it never saves a cache.
+      - name: Restore state database
+        uses: actions/cache/restore@v4
+        with:
+          path: state.db
+          key: feed-bot-heartbeat-${{ github.run_id }}
+          restore-keys: |
+            feed-bot-state-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Post heartbeat
+        env:
+          STATUS_WEBHOOK_URL: ${{ secrets.STATUS_WEBHOOK_URL }}
+          HEARTBEAT_FORCE: ${{ inputs.force }}
+        run: python heartbeat.py

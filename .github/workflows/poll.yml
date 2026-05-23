@@ -1,0 +1,65 @@
+name: Poll feeds
+
+# Every 15 minutes. GitHub Actions cron runs in UTC and can drift or skip runs
+# under platform load; see the README. workflow_dispatch allows manual runs,
+# including the one-time seeding run on first deploy.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: "Seed mode: record current feed items as seen WITHOUT posting to Discord"
+        type: boolean
+        default: false
+
+# Serialize runs so two overlapping invocations cannot both restore and then
+# clobber the state cache. Do not cancel an in-progress run; let it finish.
+concurrency:
+  group: feed-bot-state
+  cancel-in-progress: false
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Restore the SQLite state file. The key is unique per run, so the exact
+      # key never hits; the restore-keys prefix pulls the most recent cache.
+      # A new cache is written at the end of the run under the unique key.
+      - name: Restore state database
+        uses: actions/cache/restore@v4
+        with:
+          path: state.db
+          key: feed-bot-state-${{ github.run_id }}
+          restore-keys: |
+            feed-bot-state-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Poll feeds
+        env:
+          NEWS_WEBHOOK_URL: ${{ secrets.NEWS_WEBHOOK_URL }}
+          WEATHER_WEBHOOK_URL: ${{ secrets.WEATHER_WEBHOOK_URL }}
+          GOVERNMENT_WEBHOOK_URL: ${{ secrets.GOVERNMENT_WEBHOOK_URL }}
+          STATUS_WEBHOOK_URL: ${{ secrets.STATUS_WEBHOOK_URL }}
+          SEED_MODE: ${{ inputs.seed }}
+        run: python main.py
+
+      # Save the updated state even if the run failed, so de-duplication does
+      # not regress after a partial run.
+      - name: Save state database
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: state.db
+          key: feed-bot-state-${{ github.run_id }}

@@ -1,0 +1,96 @@
+# ============================================================================
+# Upstate SC feed bot configuration
+#
+# This file holds NON-SECRET settings only. Webhook URLs live in .env (local
+# runs) or GitHub Actions repository Secrets (deployed runs). Never put a
+# webhook URL in this file; it is committed to the repo.
+# ============================================================================
+
+# Which environment variable (.env key or Actions Secret name) holds the
+# webhook URL for each Discord channel.
+channels:
+  news:       NEWS_WEBHOOK_URL        # -> #news-feed
+  weather:    WEATHER_WEBHOOK_URL     # -> #weather-alerts
+  government: GOVERNMENT_WEBHOOK_URL  # -> #government-watch
+  status:     STATUS_WEBHOOK_URL      # -> #bot-status
+
+# Operational settings.
+settings:
+  database_path: state.db        # SQLite file. Lives in the Actions cache.
+  prune_days: 90                 # Drop seen-item rows older than this many days.
+  failure_alert_hours: 24        # Warn #bot-status after a source is down this long.
+  max_posts_per_source: 25       # Flood guard per run. See README, "First run".
+  heartbeat_lookback_days: 7     # Window the weekly heartbeat aggregates over.
+
+# --- 1. Local news RSS -> #news-feed ----------------------------------------
+news_feeds:
+  - name: "WYFF News 4"
+    url: "https://www.wyff4.com/topstories-rss"
+  - name: "WSPA 7News"
+    url: "https://www.wspa.com/feed/"
+  - name: "Greenville Journal"
+    url: "https://greenvillejournal.com/feed/"
+  # GVLtoday is NOT included. The URL in the original source list
+  # (https://gvltoday.6amcity.com/index.rss) returns an HTML app shell, not
+  # RSS. 6AM City rebuilt its site on a JavaScript framework and no longer
+  # exposes a feed at /index.rss, /feed, /rss, /feed.xml, or /index.xml; all
+  # of them redirect to an HTML page. This is the same situation as FOX
+  # Carolina below. If 6AM City restores a real feed, add it back here as a
+  # one-line entry. See the README.
+#
+# FOX Carolina (WHNS) is intentionally excluded. It is a Gray Media station,
+# and Gray's CMS exposes no public RSS feed. Do not add a scraper for it. The
+# outlets above cover the same beat. See the README.
+
+# --- 2. NWS active alerts -> #weather-alerts --------------------------------
+nws:
+  endpoint: "https://api.weather.gov/alerts/active?area=SC"
+  # NWS rejects requests that send no User-Agent. Put a REAL contact address
+  # here so NWS can reach the chapter if the bot ever misbehaves. Replace the
+  # example address below before deploying.
+  user_agent: "upstate-dsa-feed-bot/1.0 (contact@upstatedsa.example)"
+  # County FIPS / SAME codes, matched against geocode.SAME on each alert.
+  counties:
+    "045045": "Greenville"
+    "045083": "Spartanburg"
+    "045077": "Pickens"
+    "045007": "Anderson"
+    "045021": "Cherokee"
+    "045059": "Laurens"
+    "045087": "Union"
+
+# --- 3a / 3b. CivicPlus RSS meeting calendars -> #government-watch ----------
+# To add another calendar (for example a Planning Commission): find its CID on
+# the jurisdiction's calendar.aspx page, then add the number to the cids list.
+# That is the only change needed.
+civicplus_feeds:
+  - name: "Spartanburg County Council"
+    jurisdiction: "Spartanburg County"
+    feed_template: "https://www.spartanburgcounty.gov/RSSFeed.aspx?ModID=58&CID={cid}"
+    cids: [22]
+  - name: "City of Spartanburg"
+    jurisdiction: "City of Spartanburg"
+    feed_template: "https://www.cityofspartanburg.org/RSSFeed.aspx?ModID=58&CID={cid}"
+    cids: [14]
+
+# --- 3c. CivicClerk OData -> #government-watch ------------------------------
+civicclerk:
+  name: "City of Greenville"
+  jurisdiction: "City of Greenville"
+  url: "https://greenvillesc.api.civicclerk.com/v1/Events?$top=20&$orderby=startDateTime%20desc"
+  portal: "https://greenvillesc.portal.civicclerk.com"
+  # A browser-like User-Agent plus matching Origin / Referer. The portal's JS
+  # bundle checks an X-Bypass-Recaptcha-Secret header, so this endpoint may
+  # rate-limit or block non-browser clients. See the README CivicClerk section.
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+
+# --- 3d. Greenville County proxy via Substack -> #government-watch ----------
+# Greenville County publishes no RSS, iCal, or JSON feed. This proxies the
+# County Council Chair's weekly newsletter. The newsletter is curated through
+# his political interests; treat it as unreliable for contested items. See the
+# README, "Known limitation".
+substack_proxy:
+  name: "Greenville County"
+  jurisdiction: "Greenville County (via Council Chair newsletter)"
+  url: "https://bentonblount.substack.com/feed"
+  keywords: ["meeting", "council", "agenda", "commission", "hearing", "workshop"]
