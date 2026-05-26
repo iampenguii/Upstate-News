@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 import yaml
 from dotenv import load_dotenv
 
+from content_filters import compile_filters, passes_filters
 import discord_post
 from fetchers.civicclerk import CivicClerkHTTPError, fetch_civicclerk
 from fetchers.nws import fetch_nws_alerts
@@ -158,6 +159,68 @@ def _oldest_first(items: list) -> list:
     return sorted(items, key=lambda i: i.get("published_iso") or "")
 
 
+def _filter_configs(config: dict, channel: str, source_cfg: dict | None = None) -> list:
+    """Return filters ordered from broadest to most specific."""
+    filters = config.get("filters") or {}
+    configs = [filters.get("all"), filters.get(channel)]
+    if source_cfg:
+        configs.append(source_cfg.get("filters"))
+    return configs
+
+
+def _apply_filters(
+    items: list,
+    config: dict,
+    channel: str,
+    source_cfg: dict | None = None,
+) -> tuple[list, int]:
+    """Apply configured filters for a channel/source pair.
+
+    Returns (kept_items, filtered_count). Filtered items are not marked seen, so
+    fixing an over-strict filter can still post currently-active feed items.
+    """
+    spec = compile_filters(_filter_configs(config, channel, source_cfg))
+    kept = [item for item in items if passes_filters(item, spec)]
+    return kept, len(items) - len(kept)
+
+
+def _validate_filter_config(config: dict) -> None:
+    """Fail fast on malformed filters instead of failing every source later."""
+    filters = config.get("filters") or {}
+    checks = [
+        ("filters.all", [filters.get("all")]),
+        ("filters.news", [filters.get("news")]),
+        ("filters.weather", [filters.get("weather")]),
+        ("filters.government", [filters.get("government")]),
+        ("nws.filters", [(config.get("nws") or {}).get("filters")]),
+        ("civicclerk.filters", [(config.get("civicclerk") or {}).get("filters")]),
+        (
+            "substack_proxy.filters",
+            [(config.get("substack_proxy") or {}).get("filters")],
+        ),
+    ]
+    checks.extend(
+        (
+            f"news_feeds[{feed.get('name', 'unnamed')}].filters",
+            [feed.get("filters")],
+        )
+        for feed in config.get("news_feeds", [])
+    )
+    checks.extend(
+        (
+            f"civicplus_feeds[{feed.get('name', 'unnamed')}].filters",
+            [feed.get("filters")],
+        )
+        for feed in config.get("civicplus_feeds", [])
+    )
+
+    for label, configs in checks:
+        try:
+            compile_filters(configs)
+        except ValueError as err:
+            raise ValueError(f"Invalid {label}: {err}") from err
+
+
 # ---------------------------------------------------------------------------
 # The run
 # ---------------------------------------------------------------------------
@@ -176,6 +239,7 @@ class RunStats:
 
 def run(seed: bool = False) -> None:
     config = load_config()
+    _validate_filter_config(config)
     webhooks = resolve_webhooks(config)
     settings = config["settings"]
 
@@ -202,7 +266,9 @@ def run(seed: bool = False) -> None:
             fresh = [
                 i for i in items if not state.is_seen("news_items", i["guid"])
             ]
-            fresh = _oldest_first(fresh)[:cap]
+            fresh = _oldest_first(fresh)
+            fresh, filtered = _apply_filters(fresh, config, "news", feed)
+            fresh = fresh[:cap]
             for item in fresh:
                 if not seed:
                     discord_post.post_embed(
@@ -215,7 +281,7 @@ def run(seed: bool = False) -> None:
                 )
             state.record_success(source)
             stats.ok += 1
-            log.info("%s: %d new item(s)", source, len(fresh))
+            log.info("%s: %d new item(s), %d filtered", source, len(fresh), filtered)
         except Exception as err:  # noqa: BLE001
             stats.failed += 1
             log.exception("%s failed: %s", source, err)
@@ -234,7 +300,9 @@ def run(seed: bool = False) -> None:
             a
             for a in alerts
             if a["guid"] and not state.is_seen("weather_alerts", a["guid"])
-        ][:cap]
+        ]
+        fresh, filtered = _apply_filters(fresh, config, "weather", config["nws"])
+        fresh = fresh[:cap]
         for alert in fresh:
             if not seed:
                 discord_post.post_embed(
@@ -249,7 +317,7 @@ def run(seed: bool = False) -> None:
             )
         state.record_success(source)
         stats.ok += 1
-        log.info("nws: %d new alert(s)", len(fresh))
+        log.info("nws: %d new alert(s), %d filtered", len(fresh), filtered)
     except Exception as err:  # noqa: BLE001
         stats.failed += 1
         log.exception("nws failed: %s", err)
@@ -274,11 +342,13 @@ def run(seed: bool = False) -> None:
                 seen_guids.add(item["guid"])
                 unique_items.append(item)
 
-            fresh = [
-                extract_meeting(i)
-                for i in unique_items
-                if not state.is_seen("meetings", i["guid"])
-            ][:cap]
+            fresh_items = [
+                i for i in unique_items if not state.is_seen("meetings", i["guid"])
+            ]
+            fresh_items, filtered = _apply_filters(
+                fresh_items, config, "government", feed
+            )
+            fresh = [extract_meeting(i) for i in fresh_items][:cap]
             for meeting in fresh:
                 if not seed:
                     discord_post.post_embed(
@@ -293,7 +363,12 @@ def run(seed: bool = False) -> None:
                 )
             state.record_success(source)
             stats.ok += 1
-            log.info("%s: %d new meeting(s)", source, len(fresh))
+            log.info(
+                "%s: %d new meeting(s), %d filtered",
+                source,
+                len(fresh),
+                filtered,
+            )
         except Exception as err:  # noqa: BLE001
             stats.failed += 1
             log.exception("%s failed: %s", source, err)
@@ -307,7 +382,9 @@ def run(seed: bool = False) -> None:
         meetings = fetch_civicclerk(cc)
         fresh = [
             m for m in meetings if not state.is_seen("meetings", m["guid"])
-        ][:cap]
+        ]
+        fresh, filtered = _apply_filters(fresh, config, "government", cc)
+        fresh = fresh[:cap]
         for meeting in fresh:
             if not seed:
                 discord_post.post_embed(
@@ -320,7 +397,7 @@ def run(seed: bool = False) -> None:
             )
         state.record_success(source)
         stats.ok += 1
-        log.info("%s: %d new meeting(s)", source, len(fresh))
+        log.info("%s: %d new meeting(s), %d filtered", source, len(fresh), filtered)
     except CivicClerkHTTPError as err:
         stats.failed += 1
         log.error("CivicClerk HTTP error: %s", err.summary())
@@ -349,7 +426,9 @@ def run(seed: bool = False) -> None:
         fresh = [
             i for i in relevant if not state.is_seen("substack_items", i["guid"])
         ]
-        fresh = _oldest_first(fresh)[:cap]
+        fresh = _oldest_first(fresh)
+        fresh, filtered = _apply_filters(fresh, config, "government", sp)
+        fresh = fresh[:cap]
         for item in fresh:
             if not seed:
                 discord_post.post_embed(
@@ -362,7 +441,12 @@ def run(seed: bool = False) -> None:
             )
         state.record_success(source)
         stats.ok += 1
-        log.info("%s: %d new item(s) after keyword filter", source, len(fresh))
+        log.info(
+            "%s: %d new item(s) after keyword filter, %d configured-filtered",
+            source,
+            len(fresh),
+            filtered,
+        )
     except Exception as err:  # noqa: BLE001
         stats.failed += 1
         log.exception("%s failed: %s", source, err)

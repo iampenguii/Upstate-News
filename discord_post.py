@@ -64,7 +64,9 @@ def truncate(text: str, limit: int) -> str:
     text = text or ""
     if len(text) <= limit:
         return text
-    return text[: limit - 1].rstrip() + "…"
+    if limit <= 3:
+        return text[:limit]
+    return text[: limit - 3].rstrip() + "..."
 
 
 def fmt_et(iso_str: str) -> str:

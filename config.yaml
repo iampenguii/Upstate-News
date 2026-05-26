@@ -22,10 +22,39 @@ settings:
   max_posts_per_source: 25       # Flood guard per run. See README, "First run".
   heartbeat_lookback_days: 7     # Window the weekly heartbeat aggregates over.
 
+# Optional content filters. Keyword matching is case-insensitive and checks
+# human-readable fields such as title, summary, headline, event, counties, and
+# meeting location.
+#
+# include_keywords: if non-empty, post only items matching at least one keyword.
+# exclude_keywords: never post items matching any keyword.
+#
+# Filters can be set here for all sources or a channel, and can also be set on
+# an individual source below with a `filters:` block. Source-level
+# include_keywords override channel/global include_keywords; exclude_keywords
+# are additive.
+filters:
+  all:
+    include_keywords: []
+    exclude_keywords: []
+  news:
+    include_keywords: []
+    exclude_keywords: []
+  weather:
+    include_keywords: []
+    exclude_keywords: []
+  government:
+    include_keywords: []
+    exclude_keywords: []
+
 # --- 1. Local news RSS -> #news-feed ----------------------------------------
 news_feeds:
   - name: "WYFF News 4"
     url: "https://www.wyff4.com/topstories-rss"
+    # Example source-specific filter:
+    # filters:
+    #   include_keywords: ["greenville", "spartanburg"]
+    #   exclude_keywords: ["sports"]
   - name: "WSPA 7News"
     url: "https://www.wspa.com/feed/"
   - name: "Greenville Journal"

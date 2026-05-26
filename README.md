@@ -194,6 +194,54 @@ To run the bot from a laptop (for testing or for the manual fallback work):
 
 ---
 
+## Filtering
+
+Filters live in `config.yaml`. They are optional and run after de-duplication
+but before the per-source flood cap, so excluded items do not consume the cap.
+
+Each filter block supports two lists:
+
+- `include_keywords`: if non-empty, post only items whose text matches at
+  least one keyword.
+- `exclude_keywords`: never post items whose text matches any keyword.
+
+Matching is case-insensitive substring matching against human-readable fields:
+titles, summaries, headlines, weather event names, affected counties, meeting
+locations, and similar text. It does not inspect webhook URLs or internal
+GUIDs.
+
+Filters can be broad:
+
+```yaml
+filters:
+  news:
+    include_keywords: ["greenville", "spartanburg", "anderson"]
+    exclude_keywords: ["sports", "lottery"]
+  government:
+    exclude_keywords: ["cancelled", "canceled"]
+```
+
+They can also be source-specific:
+
+```yaml
+news_feeds:
+  - name: "WYFF News 4"
+    url: "https://www.wyff4.com/topstories-rss"
+    filters:
+      include_keywords: ["greenville", "spartanburg"]
+      exclude_keywords: ["football"]
+```
+
+Source-level `include_keywords` override broader include lists. Exclude lists
+are additive, so a global/channel exclusion still applies to a source with its
+own filters.
+
+Filtered items are not marked as seen. That is intentional: if a filter is too
+strict and you fix it while the item is still active in the feed, the bot can
+still post it on the next run.
+
+---
+
 ## The weekly heartbeat
 
 Every Monday at 09:00 Eastern, the bot posts a line to `#bot-status` that looks
@@ -436,10 +484,12 @@ Whether a URL leaked or it is just the scheduled 6-to-12-month rotation:
 main.py                     Poll entry point. Orchestrates the fetchers.
 heartbeat.py                Weekly summary builder. Separate workflow step.
 discord_post.py             Webhook posting and one embed builder per source type.
+content_filters.py          Config-driven include/exclude keyword filtering.
 state.py                    SQLite wrapper: de-duplication, error counts, run stats.
-config.yaml                 Channel routing, feed list, county codes, keywords.
+config.yaml                 Channel routing, feed list, county codes, filters.
 .env.example                Template for the four webhook URLs (local runs only).
 requirements.txt            Python dependencies.
+tests/                      Standard-library unit tests.
 fetchers/
   rss.py                    Generic RSS fetcher: news, Substack, CivicPlus.
   nws.py                    NWS active-alerts fetcher with county filtering.
